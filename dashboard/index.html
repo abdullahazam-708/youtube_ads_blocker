@@ -1,0 +1,137 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Aegis AI Shield - Unified Control Center</title>
+  <link rel="stylesheet" href="index.css">
+  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;700;900&display=swap" rel="stylesheet">
+  <!-- Chart.js CDN for interactive telemetry -->
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+</head>
+<body>
+  <!-- Ambient cyber backdrop -->
+  <div class="cyber-grid"></div>
+  <div class="glow-orb orb-1"></div>
+  <div class="glow-orb orb-2"></div>
+
+  <div class="app-container">
+    <!-- Sidebar Navigation -->
+    <aside class="sidebar">
+      <div class="logo-area">
+        <span class="logo-shield">🛡️</span>
+        <span class="logo-text">AEGIS <span class="cyan">SHIELD</span></span>
+      </div>
+      <nav class="nav-links">
+        <a href="#" class="nav-item active">📊 Real-Time Console</a>
+        <a href="#" class="nav-item">🛡️ Threat Intel Database</a>
+        <a href="#" class="nav-item">📱 Connected Devices</a>
+        <a href="#" class="nav-item">⚙️ AI Training Pipeline</a>
+      </nav>
+      <div class="system-status-card">
+        <div class="status-top">
+          <span class="pulse-dot green"></span>
+          <span>Go Core Engine</span>
+        </div>
+        <span class="status-text text-active">Fully Armed (Port 8080)</span>
+      </div>
+    </aside>
+
+    <!-- Main Content Area -->
+    <main class="main-content">
+      <!-- Top Bar -->
+      <header class="topbar">
+        <div class="welcome-text">
+          <h1>Unified Threat Dashboard</h1>
+          <p class="subtitle">AI-driven predictive network protection</p>
+        </div>
+        <div class="profile-area">
+          <span class="api-badge" id="api-status">CLOUDSYNC ACTIVE</span>
+          <span class="user-avatar">🧑‍💻</span>
+        </div>
+      </header>
+
+      <!-- Key Metrics Row -->
+      <section class="metrics-grid">
+        <div class="metric-card glassmorphic">
+          <div class="metric-info">
+            <span class="metric-label">TOTAL THREATS BLOCK</span>
+            <h2 id="metric-total" class="metric-value">2,845</h2>
+          </div>
+          <span class="metric-icon">🚫</span>
+        </div>
+
+        <div class="metric-card glassmorphic">
+          <div class="metric-info">
+            <span class="metric-label">DYNAMIC AI EFFICIENCY</span>
+            <h2 id="metric-efficiency" class="metric-value">98.4%</h2>
+          </div>
+          <span class="metric-icon">⚡</span>
+        </div>
+
+        <div class="metric-card glassmorphic">
+          <div class="metric-info">
+            <span class="metric-label">CONNECTED ENDPOINTS</span>
+            <h2 id="metric-devices" class="metric-value">3</h2>
+          </div>
+          <span class="metric-icon">💻</span>
+        </div>
+      </section>
+
+      <!-- Charts & Visualizations Section -->
+      <section class="charts-row">
+        <!-- Interactive Line Chart Widget -->
+        <div class="chart-container glassmorphic card-wide">
+          <h3 class="card-title">Block History (Last 24 Hours)</h3>
+          <div class="chart-wrapper">
+            <canvas id="telemetryChart"></canvas>
+          </div>
+        </div>
+
+        <!-- Donut Chart Widget -->
+        <div class="chart-container glassmorphic card-narrow">
+          <h3 class="card-title">Threat Breakdown</h3>
+          <div class="chart-wrapper">
+            <canvas id="typeChart"></canvas>
+          </div>
+        </div>
+      </section>
+
+      <!-- Bottom Feed Row -->
+      <section class="data-row">
+        <!-- Live Request Interceptor feed -->
+        <div class="feed-container glassmorphic card-wide">
+          <div class="feed-header">
+            <h3 class="card-title">Real-Time Traffic Interceptor</h3>
+            <span class="live-tag">LIVE FEED</span>
+          </div>
+          <div class="table-wrapper">
+            <table>
+              <thead>
+                <tr>
+                  <th>ENDPOINT/DEVICE</th>
+                  <th>INTERCEPTED TARGET URL</th>
+                  <th>DETECTION METHOD</th>
+                  <th>TIMESTAMP</th>
+                </tr>
+              </thead>
+              <tbody id="live-feed-body">
+                <!-- Injected via JavaScript -->
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <!-- Connected Devices List -->
+        <div class="devices-container glassmorphic card-narrow">
+          <h3 class="card-title">Connected Devices</h3>
+          <div class="device-list" id="device-list-container">
+            <!-- Injected via JavaScript -->
+          </div>
+        </div>
+      </section>
+    </main>
+  </div>
+  <script src="app.js"></script>
+</body>
+</html>

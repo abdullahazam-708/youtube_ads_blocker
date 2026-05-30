@@ -1,0 +1,34 @@
+{
+  "manifest_version": 3,
+  "name": "Aegis AI Shield",
+  "version": "1.0.0",
+  "description": "Multi-layered AI-powered ad blocking extension.",
+  "permissions": [
+    "declarativeNetRequest",
+    "storage",
+    "activeTab"
+  ],
+  "host_permissions": [
+    "<all_urls>"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "action": {
+    "default_popup": "popup.html"
+  },
+  "content_scripts": [
+    {
+      "matches": ["https://*.youtube.com/*"],
+      "js": ["content.js"],
+      "run_at": "document_start"
+    }
+  ],
+  "declarative_net_request": {
+    "rule_resources": [{
+      "id": "ruleset_1",
+      "enabled": true,
+      "path": "rules.json"
+    }]
+  }
+}
