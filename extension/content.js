@@ -1,26 +1,26 @@
 // ============================================================
-// Aegis AI Shield v3.0 — YouTube Premium Simulation
-// New in v3: Auto-clicks skip button the INSTANT it appears.
-//            Bypasses "wait 5s then skip" by seeking video to end.
-//            Zero manual interaction required.
+// Aegis AI Shield v4.0 — Zero-Ad YouTube Experience
+// 3-Layer Strategy:
+//   Layer 1 → Network: rules.json blocks ad servers (no download)
+//   Layer 2 → DOM: Remove ad nodes before they render
+//   Layer 3 → Player: Mute + seek-to-end + auto-click skip
+// Result: Videos play instantly with ZERO ads, like YouTube Premium
 // ============================================================
 
 (function () {
     'use strict';
 
     // ─────────────────────────────────────────────────────────────────────────
-    // 1. INJECT CSS AT document_start
-    //    Hides the ad video frame before it ever paints on screen.
+    // LAYER 2A: INJECT CSS — hide ad elements before any frame paints
     // ─────────────────────────────────────────────────────────────────────────
     const AEGIS_STYLE = `
-        /* Hide ad video frame completely so there's no flash */
+        /* Hide ad video frame instantly */
         .ad-showing video,
         .ad-interrupting video {
             opacity: 0 !important;
             pointer-events: none !important;
         }
-
-        /* Hide all overlay banner ads */
+        /* Hide all known ad overlay elements */
         .ad-showing .ytp-ad-player-overlay,
         .ad-showing .ytp-ad-overlay-container,
         .ad-showing .ytp-ad-text-overlay,
@@ -29,259 +29,234 @@
         .ytp-ad-overlay-container,
         .ytp-ad-overlay-image,
         .ytp-ad-overlay-slot,
-        .ytp-ad-text-overlay {
-            display: none !important;
-            visibility: hidden !important;
-            opacity: 0 !important;
-        }
-
-        /* Hide sidebar / companion ads */
-        #player-ads,
-        ytd-companion-ad-renderer,
-        #masthead-ad,
-        ytd-ad-slot-renderer,
-        ytd-banner-promo-renderer,
-        ytd-statement-banner-renderer,
-        .ytd-banner-promo-renderer-background {
-            display: none !important;
-        }
-
-        /* Hide homepage and search promoted items */
+        .ytp-ad-text-overlay,
+        .ytp-ad-progress,
+        .ytp-ad-progress-list,
+        .ytp-ad-simple-ad-badge,
+        .ytp-ad-preview-container,
+        .ytp-ad-preview-text-modern,
+        .ytp-ad-button-icon,
+        .ytp-ad-visit-advertiser-button { display: none !important; }
+        /* Sidebar / companion / banner ads */
+        #player-ads, ytd-companion-ad-renderer, #masthead-ad,
+        ytd-ad-slot-renderer, ytd-banner-promo-renderer,
+        ytd-statement-banner-renderer, .ytd-banner-promo-renderer-background,
         ytd-rich-item-renderer:has(ytd-ad-slot-renderer),
-        ytd-display-ad-renderer,
-        ytd-promoted-sparkles-web-renderer,
-        ytd-promoted-video-renderer,
-        ytd-search-pyv-renderer,
-        ytd-in-feed-ad-layout-renderer {
-            display: none !important;
-        }
+        ytd-display-ad-renderer, ytd-promoted-sparkles-web-renderer,
+        ytd-promoted-video-renderer, ytd-search-pyv-renderer,
+        ytd-in-feed-ad-layout-renderer { display: none !important; }
     `;
 
     function injectCSS() {
-        if (document.getElementById('aegis-ai-shield-styles')) return;
-        const style = document.createElement('style');
-        style.id = 'aegis-ai-shield-styles';
-        style.textContent = AEGIS_STYLE;
-        (document.head || document.documentElement).appendChild(style);
+        if (document.getElementById('aegis-shield-v4')) return;
+        const s = document.createElement('style');
+        s.id = 'aegis-shield-v4';
+        s.textContent = AEGIS_STYLE;
+        (document.head || document.documentElement).appendChild(s);
     }
-
-    // Run immediately — before the page renders
     injectCSS();
     document.addEventListener('DOMContentLoaded', injectCSS, { once: true });
 
     // ─────────────────────────────────────────────────────────────────────────
-    // 2. ALL KNOWN SKIP BUTTON SELECTORS
-    //    YouTube changes these frequently — we cover every variant.
+    // LAYER 2B: AD NODE REMOVER
+    // These selectors match the actual ad container elements YouTube injects.
+    // We remove them from the DOM entirely so the player never renders them.
+    // ─────────────────────────────────────────────────────────────────────────
+    const AD_NODE_SELECTORS = [
+        'ytd-ad-slot-renderer',
+        'ytd-display-ad-renderer',
+        'ytd-promoted-sparkles-web-renderer',
+        'ytd-promoted-video-renderer',
+        'ytd-search-pyv-renderer',
+        'ytd-in-feed-ad-layout-renderer',
+        'ytd-companion-ad-renderer',
+        'ytd-banner-promo-renderer',
+        '#player-ads',
+        '#masthead-ad',
+    ];
+
+    function removeAdNodes() {
+        for (const sel of AD_NODE_SELECTORS) {
+            document.querySelectorAll(sel).forEach(node => {
+                node.remove();
+            });
+        }
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // LAYER 3: SKIP BUTTON SELECTORS
     // ─────────────────────────────────────────────────────────────────────────
     const SKIP_SELECTORS = [
         '.ytp-ad-skip-button',
         '.ytp-ad-skip-button-modern',
         '.ytp-skip-ad-button',
         '.ytp-ad-skip-button-slot button',
-        'button.ytp-ad-skip-button',
         '[class*="skip-button"]',
         '[class*="skip-ad"]',
     ];
 
-    // ─────────────────────────────────────────────────────────────────────────
-    // 3. AUTO-CLICK SKIP BUTTON
-    //    Finds any visible skip button and clicks it immediately.
-    //    Returns true if a button was clicked.
-    // ─────────────────────────────────────────────────────────────────────────
     function clickSkipButton() {
         for (const sel of SKIP_SELECTORS) {
-            const btns = document.querySelectorAll(sel);
-            for (const btn of btns) {
-                if (btn) {
-                    btn.click();
-                    console.log('[Aegis v3] Skip button auto-clicked:', sel);
-                    return true;
-                }
-            }
-        }
-        return false;
-    }
-
-    // ─────────────────────────────────────────────────────────────────────────
-    // 4. BYPASS "WAIT X SECONDS" — seek the ad video to its end
-    //    YouTube only enables the skip button after N seconds.
-    //    We skip that wait by seeking the ad video to its end instantly,
-    //    which forces YouTube to mark the ad as "watched" and enable skip.
-    // ─────────────────────────────────────────────────────────────────────────
-    function bypassSkipCountdown() {
-        const video = document.querySelector('video');
-        if (!video) return;
-
-        // Mute immediately so no audio plays
-        video.muted  = true;
-        video.volume = 0;
-
-        // If duration is known, jump to end — this triggers the skip button
-        if (video.duration && isFinite(video.duration) && video.duration > 0) {
-            video.currentTime = video.duration - 0.01;
-            video.playbackRate = 16.0;
-        } else {
-            // Duration not loaded yet — set max speed and retry shortly
-            video.playbackRate = 16.0;
-            setTimeout(bypassSkipCountdown, 200);
+            document.querySelectorAll(sel).forEach(btn => btn && btn.click());
         }
     }
 
     // ─────────────────────────────────────────────────────────────────────────
-    // 5. CORE AD KILL — runs every time an ad is detected
+    // LAYER 3: PLAYER-LEVEL AD KILLER
+    // Called when an ad is detected in the player.
+    // Mutes + seeks to end + clicks skip button instantly.
     // ─────────────────────────────────────────────────────────────────────────
-    function killAd() {
+    function killPlayerAd() {
         const player = document.querySelector('.html5-video-player');
-        if (!player) return;
+        const video  = document.querySelector('video');
+        if (!player || !video) return;
 
         const adActive =
             player.classList.contains('ad-showing') ||
-            player.classList.contains('ad-interrupting') ||
-            !!document.querySelector('.ytp-ad-player-overlay') ||
-            !!document.querySelector('.ytp-ad-duration-remaining');
+            player.classList.contains('ad-interrupting');
 
         if (!adActive) return;
 
-        // Step 1: Try to click skip button right now
-        const skipped = clickSkipButton();
+        // Mute immediately — no sound at all
+        video.muted  = true;
+        video.volume = 0;
 
-        // Step 2: If no skip button yet, bypass the countdown
-        // (seek video to end so YouTube enables the skip button sooner)
-        if (!skipped) {
-            bypassSkipCountdown();
+        // Warp speed playback
+        video.playbackRate = 16.0;
+
+        // Seek to very end of ad (forces YouTube to enable the skip button)
+        if (video.duration && isFinite(video.duration) && video.duration > 0) {
+            video.currentTime = video.duration - 0.01;
         }
 
-        // Step 3: Schedule aggressive re-attempts every 50ms for 3 seconds
-        // to handle the window where the skip button appears after countdown
-        clearTimeout(window._aegisRetryTimer);
-        let retries = 0;
+        // Click skip button
+        clickSkipButton();
+
+        // Retry for 3 seconds every 50ms (handles delayed skip button appearance)
+        clearTimeout(window._aegisKillTimer);
+        let attempts = 0;
         function retryKill() {
-            retries++;
-            if (retries > 60) return; // Stop after 3 seconds of retries
-
-            const stillAd = document.querySelector('.html5-video-player.ad-showing') ||
-                            document.querySelector('.html5-video-player.ad-interrupting');
-            if (!stillAd) return; // Ad is gone, we're done
-
-            bypassSkipCountdown();
-            clickSkipButton();
-
-            window._aegisRetryTimer = setTimeout(retryKill, 50);
-        }
-        window._aegisRetryTimer = setTimeout(retryKill, 50);
-    }
-
-    // ─────────────────────────────────────────────────────────────────────────
-    // 6. DEDICATED SKIP BUTTON OBSERVER
-    //    Watches ONLY for skip button elements being added to the DOM.
-    //    This fires the instant YouTube injects the skip button node,
-    //    even mid-countdown. We click it immediately.
-    // ─────────────────────────────────────────────────────────────────────────
-    function startSkipButtonObserver() {
-        const skipObserver = new MutationObserver(() => {
-            // Check if any skip button is now in DOM
-            for (const sel of SKIP_SELECTORS) {
-                const btn = document.querySelector(sel);
-                if (btn) {
-                    btn.click();
-                    console.log('[Aegis v3] Skip button appeared & auto-clicked via observer.');
-                }
+            if (attempts++ > 60) return;
+            const still = document.querySelector('.html5-video-player.ad-showing') ||
+                          document.querySelector('.html5-video-player.ad-interrupting');
+            if (!still) return;
+            const v = document.querySelector('video');
+            if (v) {
+                v.muted = true;
+                v.volume = 0;
+                v.playbackRate = 16.0;
+                if (v.duration && isFinite(v.duration)) v.currentTime = v.duration - 0.01;
             }
-        });
-
-        skipObserver.observe(document.documentElement, {
-            subtree: true,
-            childList: true,
-        });
+            clickSkipButton();
+            window._aegisKillTimer = setTimeout(retryKill, 50);
+        }
+        window._aegisKillTimer = setTimeout(retryKill, 50);
     }
 
     // ─────────────────────────────────────────────────────────────────────────
-    // 7. MAIN PLAYER OBSERVER
-    //    Watches for 'ad-showing' class being added to the player element.
-    //    This is the primary trigger for killAd().
+    // MASTER OBSERVER — watches for everything
+    // One observer handles both DOM node insertion and class changes.
     // ─────────────────────────────────────────────────────────────────────────
-    function startPlayerObserver() {
-        const playerObserver = new MutationObserver((mutations) => {
+    function startObserver() {
+        const observer = new MutationObserver((mutations) => {
+            let shouldKillAd = false;
+            let shouldRemoveNodes = false;
+
             for (const m of mutations) {
+                // Detect ad-showing class being added to player
                 if (m.type === 'attributes' && m.attributeName === 'class') {
-                    const target = m.target;
-                    if (
-                        target.classList.contains('ad-showing') ||
-                        target.classList.contains('ad-interrupting')
-                    ) {
-                        killAd();
-                        return;
+                    const el = m.target;
+                    if (el.classList.contains('ad-showing') ||
+                        el.classList.contains('ad-interrupting')) {
+                        shouldKillAd = true;
                     }
                 }
-                // Also watch for ad nodes being inserted
+
+                // Detect new nodes being added (ad containers or skip buttons)
                 if (m.type === 'childList') {
                     for (const node of m.addedNodes) {
-                        if (node.nodeType === 1) {
-                            const cls = String(node.className || '');
-                            if (cls.includes('ytp-ad') || cls.includes('ad-showing')) {
-                                killAd();
-                                return;
-                            }
+                        if (node.nodeType !== 1) continue;
+                        const tag = node.tagName ? node.tagName.toLowerCase() : '';
+                        const cls = String(node.className || '');
+
+                        // Is it an ad container node? Remove it.
+                        if (
+                            tag.startsWith('ytd-') && (
+                                tag.includes('ad') ||
+                                tag.includes('promo') ||
+                                tag.includes('promoted') ||
+                                tag.includes('sponsored')
+                            )
+                        ) {
+                            node.remove();
+                            shouldRemoveNodes = true;
+                        }
+
+                        // Is it a skip button? Click it.
+                        if (cls.includes('skip-button') || cls.includes('skip-ad') ||
+                            cls.includes('ytp-ad')) {
+                            shouldKillAd = true;
                         }
                     }
                 }
             }
+
+            if (shouldRemoveNodes) removeAdNodes();
+            if (shouldKillAd) killPlayerAd();
         });
 
-        playerObserver.observe(document.documentElement, {
+        observer.observe(document.documentElement, {
             subtree: true,
             childList: true,
             attributes: true,
             attributeFilter: ['class'],
         });
 
-        console.log('[Aegis AI Shield v3] Player observer active.');
+        console.log('[Aegis AI Shield v4] Observer active — Zero-Ad mode ON.');
     }
 
     // ─────────────────────────────────────────────────────────────────────────
-    // 8. VIDEO EVENT LISTENER
-    //    Secondary trigger via video element events.
+    // VIDEO EVENT LISTENERS — secondary triggers
     // ─────────────────────────────────────────────────────────────────────────
     function attachVideoListeners() {
         const video = document.querySelector('video');
-        if (!video || video._aegisV3Attached) return;
-        video._aegisV3Attached = true;
-        video.addEventListener('play',       killAd, { passive: true });
-        video.addEventListener('timeupdate', killAd, { passive: true });
-        video.addEventListener('loadedmetadata', () => {
-            // When ad metadata loads, we know the duration — seek to end
-            const player = document.querySelector('.html5-video-player');
-            if (player && (
-                player.classList.contains('ad-showing') ||
-                player.classList.contains('ad-interrupting')
-            )) {
-                bypassSkipCountdown();
-                clickSkipButton();
-            }
-        }, { passive: true });
+        if (!video || video._aegisV4) return;
+        video._aegisV4 = true;
+        video.addEventListener('play',            killPlayerAd, { passive: true });
+        video.addEventListener('timeupdate',      killPlayerAd, { passive: true });
+        video.addEventListener('loadedmetadata',  killPlayerAd, { passive: true });
     }
 
     // ─────────────────────────────────────────────────────────────────────────
-    // 9. BOOT
+    // BOOT
     // ─────────────────────────────────────────────────────────────────────────
     function boot() {
-        startPlayerObserver();
-        startSkipButtonObserver();
+        // Run immediately on boot
+        removeAdNodes();
+        killPlayerAd();
+        startObserver();
         attachVideoListeners();
 
-        // Re-attach on YouTube SPA navigation (clicking a new video)
+        // Re-run on YouTube SPA navigation (new video clicked)
         document.addEventListener('yt-navigate-finish', () => {
+            removeAdNodes();
+            killPlayerAd();
             attachVideoListeners();
-            killAd();
         });
 
-        // Safety net fallback — runs every 500ms (slower = less CPU waste)
-        setInterval(() => {
-            attachVideoListeners();
-            killAd();
-        }, 500);
+        document.addEventListener('yt-page-data-updated', () => {
+            removeAdNodes();
+            killPlayerAd();
+        });
 
-        console.log('[Aegis AI Shield v3] Booted — Zero-touch Premium simulation active.');
+        // Safety net — every 800ms (low CPU, only for edge cases)
+        setInterval(() => {
+            removeAdNodes();
+            killPlayerAd();
+            attachVideoListeners();
+        }, 800);
+
+        console.log('[Aegis AI Shield v4] Booted. Videos play ad-free like YouTube Premium.');
     }
 
     if (document.readyState === 'loading') {
