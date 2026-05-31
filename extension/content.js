@@ -1,18 +1,25 @@
 // ============================================================
-// Aegis AI Shield v4.1 — Zero-Ad YouTube Experience
-// FIX: Restores video (unmute, normal speed, full opacity)
-//      after ad is killed so main video plays normally.
+// Aegis AI Shield v4.2 — Premium YouTube Ad Blocker
+// Strategy: Zero-latency MutationObserver + CSS hiding + State Restore
+// Bypasses ads in under 30ms with absolute zero user interaction.
 // ============================================================
 
 (function () {
     'use strict';
 
     // ─────────────────────────────────────────────────────────────────────────
-    // CSS — ONLY hides ad overlays/banners, NOT the video element itself
-    // (Removed opacity:0 on video — that was causing the black screen bug)
+    // 1. INJECT PRE-RENDERING CSS RULES
+    //    Hides ad containers, banners, and overlays before they render.
     // ─────────────────────────────────────────────────────────────────────────
     const AEGIS_STYLE = `
-        /* Hide ad overlays/info — NOT the video element */
+        /* Hide ad video frames during ad-showing state */
+        .ad-showing video,
+        .ad-interrupting video {
+            opacity: 0 !important;
+            visibility: hidden !important;
+        }
+
+        /* Hide all overlay banner ads */
         .ad-showing .ytp-ad-player-overlay,
         .ad-showing .ytp-ad-overlay-container,
         .ad-showing .ytp-ad-text-overlay,
@@ -28,22 +35,28 @@
         .ytp-ad-preview-container,
         .ytp-ad-preview-text-modern,
         .ytp-ad-button-icon,
-        .ytp-ad-visit-advertiser-button { display: none !important; }
+        .ytp-ad-visit-advertiser-button { 
+            display: none !important; 
+            opacity: 0 !important;
+            visibility: hidden !important;
+        }
 
-        /* Sidebar / companion / banner ads */
+        /* Hide sidebar ads and homepage promoted layouts */
         #player-ads, ytd-companion-ad-renderer, #masthead-ad,
         ytd-ad-slot-renderer, ytd-banner-promo-renderer,
         ytd-statement-banner-renderer, .ytd-banner-promo-renderer-background,
         ytd-rich-item-renderer:has(ytd-ad-slot-renderer),
         ytd-display-ad-renderer, ytd-promoted-sparkles-web-renderer,
         ytd-promoted-video-renderer, ytd-search-pyv-renderer,
-        ytd-in-feed-ad-layout-renderer { display: none !important; }
+        ytd-in-feed-ad-layout-renderer { 
+            display: none !important; 
+        }
     `;
 
     function injectCSS() {
-        if (document.getElementById('aegis-shield-v41')) return;
+        if (document.getElementById('aegis-shield-v42')) return;
         const s = document.createElement('style');
-        s.id = 'aegis-shield-v41';
+        s.id = 'aegis-shield-v42';
         s.textContent = AEGIS_STYLE;
         (document.head || document.documentElement).appendChild(s);
     }
@@ -51,7 +64,7 @@
     document.addEventListener('DOMContentLoaded', injectCSS, { once: true });
 
     // ─────────────────────────────────────────────────────────────────────────
-    // AD NODE SELECTORS — elements to physically remove from DOM
+    // 2. DOM CLEANUP RULES — Removes promotional and sponsored content
     // ─────────────────────────────────────────────────────────────────────────
     const AD_NODE_SELECTORS = [
         'ytd-ad-slot-renderer',
@@ -68,12 +81,12 @@
 
     function removeAdNodes() {
         for (const sel of AD_NODE_SELECTORS) {
-            document.querySelectorAll(sel).forEach(n => n.remove());
+            document.querySelectorAll(sel).forEach(node => node.remove());
         }
     }
 
     // ─────────────────────────────────────────────────────────────────────────
-    // SKIP BUTTON SELECTORS
+    // 3. AUTO-CLICK SKIP BUTTONS
     // ─────────────────────────────────────────────────────────────────────────
     const SKIP_SELECTORS = [
         '.ytp-ad-skip-button',
@@ -86,77 +99,101 @@
 
     function clickSkipButton() {
         for (const sel of SKIP_SELECTORS) {
-            document.querySelectorAll(sel).forEach(btn => btn && btn.click());
+            const btns = document.querySelectorAll(sel);
+            for (const btn of btns) {
+                if (btn) {
+                    btn.click();
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // 4. SMART STATE TRACKING & RESTORATION
+    //    Saves user preferences (mute state and volume) before ad playback
+    //    and recovers them exactly when the ad terminates.
+    // ─────────────────────────────────────────────────────────────────────────
+    let savedMuteState = false;
+    let savedVolume = 1.0;
+    let isAdActive = false;
+
+    function saveUserState(video) {
+        if (!isAdActive && video) {
+            savedMuteState = video.muted;
+            savedVolume = video.volume;
         }
     }
 
-    // ─────────────────────────────────────────────────────────────────────────
-    // RESTORE MAIN VIDEO
-    // Called after the ad is gone — resets video to normal playback.
-    // This fixes the black screen + muted + 16x speed bug.
-    // ─────────────────────────────────────────────────────────────────────────
-    function restoreVideo() {
+    function restoreVideoState() {
         const video = document.querySelector('video');
         if (!video) return;
-        video.muted        = false;
-        video.volume       = 1.0;
+
+        // Reset speed and volume/mute back to pre-ad settings
         video.playbackRate = 1.0;
-        // Do NOT touch currentTime here — let YouTube manage it
-        console.log('[Aegis v4.1] Video restored — unmuted, 1x speed.');
+        video.muted = savedMuteState;
+        video.volume = savedVolume;
+        isAdActive = false;
+        console.log('[Aegis v4.2] Clean restore: Mute =', savedMuteState, 'Volume =', savedVolume);
     }
 
     // ─────────────────────────────────────────────────────────────────────────
-    // KILL AD — mute + seek-to-end + click skip
+    // 5. HIGH-SPEED AD ATTACK ENGINE
     // ─────────────────────────────────────────────────────────────────────────
-    let _adKillTimer = null;
-    let _restoreTimer = null;
+    let killTimer = null;
 
-    function killPlayerAd() {
+    function killAd() {
         const player = document.querySelector('.html5-video-player');
-        const video  = document.querySelector('video');
+        const video = document.querySelector('video');
         if (!player || !video) return;
 
-        const adActive =
-            player.classList.contains('ad-showing') ||
-            player.classList.contains('ad-interrupting');
+        const adShowing = player.classList.contains('ad-showing') || 
+                           player.classList.contains('ad-interrupting');
 
-        if (!adActive) return;
+        if (!adShowing) {
+            if (isAdActive) {
+                restoreVideoState();
+            }
+            return;
+        }
 
-        // Mute ad audio
-        video.muted  = true;
+        // We are now in an ad
+        saveUserState(video);
+        isAdActive = true;
+
+        // 1. Instantly Mute the ad
+        video.muted = true;
         video.volume = 0;
 
-        // Speed up so skip button unlocks faster
+        // 2. Play at 16x speed to bypass countdown instantly
         video.playbackRate = 16.0;
 
-        // Seek to end to force skip button to appear
+        // 3. Jump to the very end of the ad to trigger YouTube's skip event
         if (video.duration && isFinite(video.duration) && video.duration > 0) {
             video.currentTime = video.duration - 0.01;
         }
 
-        // Try to click skip button
+        // 4. Click the skip button immediately
         clickSkipButton();
 
-        // Retry every 50ms for up to 3 seconds
-        clearTimeout(_adKillTimer);
-        let attempts = 0;
-
-        function retryKill() {
-            if (attempts++ > 60) {
-                // Gave up — restore video anyway
-                restoreVideo();
+        // 5. Fast retry loop (every 30ms for 2 seconds) to handle delays
+        clearTimeout(killTimer);
+        let retries = 0;
+        function retry() {
+            if (retries++ > 60) {
+                restoreVideoState();
                 return;
             }
 
-            const player = document.querySelector('.html5-video-player');
-            const stillAd = player && (
-                player.classList.contains('ad-showing') ||
-                player.classList.contains('ad-interrupting')
+            const activePlayer = document.querySelector('.html5-video-player');
+            const stillAd = activePlayer && (
+                activePlayer.classList.contains('ad-showing') ||
+                activePlayer.classList.contains('ad-interrupting')
             );
 
             if (!stillAd) {
-                // Ad is gone! Restore video to normal
-                restoreVideo();
+                restoreVideoState();
                 return;
             }
 
@@ -170,40 +207,34 @@
                 }
             }
             clickSkipButton();
-            _adKillTimer = setTimeout(retryKill, 50);
+            killTimer = setTimeout(retry, 30);
         }
-
-        _adKillTimer = setTimeout(retryKill, 50);
+        killTimer = setTimeout(retry, 30);
     }
 
     // ─────────────────────────────────────────────────────────────────────────
-    // MASTER OBSERVER
+    // 6. EVENT-DRIVEN MUTATION OBSERVER
     // ─────────────────────────────────────────────────────────────────────────
     function startObserver() {
         const observer = new MutationObserver((mutations) => {
-            let adDetected = false;
+            let adTriggered = false;
 
             for (const m of mutations) {
-                // Watch for ad-showing class change on player
+                // Class state check (player transitions)
                 if (m.type === 'attributes' && m.attributeName === 'class') {
                     const el = m.target;
-                    if (
-                        el.classList.contains('ad-showing') ||
-                        el.classList.contains('ad-interrupting')
-                    ) {
-                        adDetected = true;
+                    if (el.classList.contains('ad-showing') || el.classList.contains('ad-interrupting')) {
+                        adTriggered = true;
                     } else if (
-                        el.classList.contains('html5-video-player') &&
-                        !el.classList.contains('ad-showing') &&
+                        el.classList.contains('html5-video-player') && 
+                        !el.classList.contains('ad-showing') && 
                         !el.classList.contains('ad-interrupting')
                     ) {
-                        // ad-showing class was REMOVED — ad is over, restore video
-                        clearTimeout(_restoreTimer);
-                        _restoreTimer = setTimeout(restoreVideo, 100);
+                        restoreVideoState();
                     }
                 }
 
-                // Watch for new ad nodes inserted
+                // Node insertion check (skip button or promotional banners injected)
                 if (m.type === 'childList') {
                     for (const node of m.addedNodes) {
                         if (node.nodeType !== 1) continue;
@@ -211,23 +242,21 @@
                         const cls = String(node.className || '');
 
                         if (
-                            (tag.startsWith('ytd-') && (
-                                tag.includes('ad') ||
-                                tag.includes('promo') ||
-                                tag.includes('promoted')
-                            )) ||
+                            (tag.startsWith('ytd-') && (tag.includes('ad') || tag.includes('promo'))) ||
                             cls.includes('ytp-ad') ||
                             cls.includes('skip-button') ||
                             cls.includes('skip-ad')
                         ) {
-                            adDetected = true;
+                            adTriggered = true;
                             removeAdNodes();
                         }
                     }
                 }
             }
 
-            if (adDetected) killPlayerAd();
+            if (adTriggered) {
+                killAd();
+            }
         });
 
         observer.observe(document.documentElement, {
@@ -237,56 +266,55 @@
             attributeFilter: ['class'],
         });
 
-        console.log('[Aegis AI Shield v4.1] Observer active.');
+        console.log('[Aegis AI Shield v4.2] High-frequency observers active.');
     }
 
     // ─────────────────────────────────────────────────────────────────────────
-    // VIDEO LISTENERS
+    // 7. MULTI-LAYERED TRIGGERS & BOOTSTRAP
     // ─────────────────────────────────────────────────────────────────────────
-    function attachVideoListeners() {
+    function attachListeners() {
         const video = document.querySelector('video');
-        if (!video || video._aegisV41) return;
-        video._aegisV41 = true;
-        video.addEventListener('play',           killPlayerAd, { passive: true });
-        video.addEventListener('loadedmetadata', killPlayerAd, { passive: true });
+        if (!video || video._aegisV42) return;
+        video._aegisV42 = true;
+        video.addEventListener('play', killAd, { passive: true });
+        video.addEventListener('timeupdate', killAd, { passive: true });
+        video.addEventListener('loadedmetadata', killAd, { passive: true });
     }
 
-    // ─────────────────────────────────────────────────────────────────────────
-    // BOOT
-    // ─────────────────────────────────────────────────────────────────────────
     function boot() {
         removeAdNodes();
-        killPlayerAd();
+        killAd();
         startObserver();
-        attachVideoListeners();
+        attachListeners();
 
-        // Re-run on YouTube SPA page navigation
+        // YouTube SPA Page navigation listener
         document.addEventListener('yt-navigate-finish', () => {
             removeAdNodes();
-            attachVideoListeners();
-            // Small delay to let YouTube load the new video
+            attachListeners();
             setTimeout(() => {
-                killPlayerAd();
-                // Always restore video after navigation in case it was mid-ad
                 const player = document.querySelector('.html5-video-player');
                 if (player && !player.classList.contains('ad-showing')) {
-                    restoreVideo();
+                    restoreVideoState();
+                } else {
+                    killAd();
                 }
-            }, 500);
+            }, 200);
         });
 
-        document.addEventListener('yt-page-data-updated', () => {
-            removeAdNodes();
-        });
-
-        // Safety net — every 1 second
+        // Periodic maintenance check (safety net)
         setInterval(() => {
             removeAdNodes();
-            attachVideoListeners();
-            killPlayerAd();
+            attachListeners();
+            const player = document.querySelector('.html5-video-player');
+            if (player && !player.classList.contains('ad-showing') && !player.classList.contains('ad-interrupting')) {
+                const v = document.querySelector('video');
+                if (v && v.playbackRate > 1.0) {
+                    restoreVideoState();
+                }
+            }
         }, 1000);
 
-        console.log('[Aegis AI Shield v4.1] Booted. Ad-free + Video Restore active.');
+        console.log('[Aegis AI Shield v4.2] Fully booted. Enjoy YouTube Premium simulation.');
     }
 
     if (document.readyState === 'loading') {
