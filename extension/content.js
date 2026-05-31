@@ -1,18 +1,26 @@
 // ============================================================
-// Aegis AI Shield v2.0 — YouTube Premium Simulation
-// Strategy: MutationObserver (event-driven, 0ms latency)
-//            + CSS pre-hiding (blocks render before paint)
-//            + Network-level ad URL interception
+// Aegis AI Shield v3.0 — YouTube Premium Simulation
+// New in v3: Auto-clicks skip button the INSTANT it appears.
+//            Bypasses "wait 5s then skip" by seeking video to end.
+//            Zero manual interaction required.
 // ============================================================
 
 (function () {
     'use strict';
 
-    // ── 1. INJECT CSS AT document_start ──────────────────────────────────────
-    // These rules run BEFORE any YouTube frame paints. The ad container is
-    // hidden at the CSS level so even a single frame is never visible.
+    // ─────────────────────────────────────────────────────────────────────────
+    // 1. INJECT CSS AT document_start
+    //    Hides the ad video frame before it ever paints on screen.
+    // ─────────────────────────────────────────────────────────────────────────
     const AEGIS_STYLE = `
-        /* ── Video ad overlay & skip button area ── */
+        /* Hide ad video frame completely so there's no flash */
+        .ad-showing video,
+        .ad-interrupting video {
+            opacity: 0 !important;
+            pointer-events: none !important;
+        }
+
+        /* Hide all overlay banner ads */
         .ad-showing .ytp-ad-player-overlay,
         .ad-showing .ytp-ad-overlay-container,
         .ad-showing .ytp-ad-text-overlay,
@@ -27,7 +35,7 @@
             opacity: 0 !important;
         }
 
-        /* ── Sidebar / companion ads ── */
+        /* Hide sidebar / companion ads */
         #player-ads,
         ytd-companion-ad-renderer,
         #masthead-ad,
@@ -38,7 +46,7 @@
             display: none !important;
         }
 
-        /* ── Homepage promoted items ── */
+        /* Hide homepage and search promoted items */
         ytd-rich-item-renderer:has(ytd-ad-slot-renderer),
         ytd-display-ad-renderer,
         ytd-promoted-sparkles-web-renderer,
@@ -47,30 +55,84 @@
         ytd-in-feed-ad-layout-renderer {
             display: none !important;
         }
-
-        /* ── Pre-roll: hide the black flash while muting & skipping ── */
-        .ad-showing video {
-            opacity: 0 !important;
-        }
     `;
 
     function injectCSS() {
+        if (document.getElementById('aegis-ai-shield-styles')) return;
         const style = document.createElement('style');
         style.id = 'aegis-ai-shield-styles';
         style.textContent = AEGIS_STYLE;
         (document.head || document.documentElement).appendChild(style);
     }
 
-    // Inject as early as possible
+    // Run immediately — before the page renders
     injectCSS();
     document.addEventListener('DOMContentLoaded', injectCSS, { once: true });
 
-    // ── 2. CORE AD-KILL FUNCTION ──────────────────────────────────────────────
-    // Called every time the MutationObserver detects a relevant DOM change.
+    // ─────────────────────────────────────────────────────────────────────────
+    // 2. ALL KNOWN SKIP BUTTON SELECTORS
+    //    YouTube changes these frequently — we cover every variant.
+    // ─────────────────────────────────────────────────────────────────────────
+    const SKIP_SELECTORS = [
+        '.ytp-ad-skip-button',
+        '.ytp-ad-skip-button-modern',
+        '.ytp-skip-ad-button',
+        '.ytp-ad-skip-button-slot button',
+        'button.ytp-ad-skip-button',
+        '[class*="skip-button"]',
+        '[class*="skip-ad"]',
+    ];
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // 3. AUTO-CLICK SKIP BUTTON
+    //    Finds any visible skip button and clicks it immediately.
+    //    Returns true if a button was clicked.
+    // ─────────────────────────────────────────────────────────────────────────
+    function clickSkipButton() {
+        for (const sel of SKIP_SELECTORS) {
+            const btns = document.querySelectorAll(sel);
+            for (const btn of btns) {
+                if (btn) {
+                    btn.click();
+                    console.log('[Aegis v3] Skip button auto-clicked:', sel);
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // 4. BYPASS "WAIT X SECONDS" — seek the ad video to its end
+    //    YouTube only enables the skip button after N seconds.
+    //    We skip that wait by seeking the ad video to its end instantly,
+    //    which forces YouTube to mark the ad as "watched" and enable skip.
+    // ─────────────────────────────────────────────────────────────────────────
+    function bypassSkipCountdown() {
+        const video = document.querySelector('video');
+        if (!video) return;
+
+        // Mute immediately so no audio plays
+        video.muted  = true;
+        video.volume = 0;
+
+        // If duration is known, jump to end — this triggers the skip button
+        if (video.duration && isFinite(video.duration) && video.duration > 0) {
+            video.currentTime = video.duration - 0.01;
+            video.playbackRate = 16.0;
+        } else {
+            // Duration not loaded yet — set max speed and retry shortly
+            video.playbackRate = 16.0;
+            setTimeout(bypassSkipCountdown, 200);
+        }
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // 5. CORE AD KILL — runs every time an ad is detected
+    // ─────────────────────────────────────────────────────────────────────────
     function killAd() {
         const player = document.querySelector('.html5-video-player');
-        const video  = document.querySelector('video');
-        if (!player || !video) return;
+        if (!player) return;
 
         const adActive =
             player.classList.contains('ad-showing') ||
@@ -80,73 +142,83 @@
 
         if (!adActive) return;
 
-        // ── a. Mute & hide ────────────────────────────────────────────────
-        video.muted  = true;
-        video.volume = 0;
+        // Step 1: Try to click skip button right now
+        const skipped = clickSkipButton();
 
-        // ── b. Hard-skip: seek to end if duration is known ───────────────
-        if (video.duration && isFinite(video.duration)) {
-            video.currentTime = video.duration;
-        } else {
-            // Duration not loaded yet — warp speed to force buffering to end
-            video.playbackRate = 16.0;
+        // Step 2: If no skip button yet, bypass the countdown
+        // (seek video to end so YouTube enables the skip button sooner)
+        if (!skipped) {
+            bypassSkipCountdown();
         }
 
-        // ── c. Click every skip button variant YouTube uses ───────────────
-        const SKIP_SELECTORS = [
-            '.ytp-ad-skip-button',
-            '.ytp-ad-skip-button-modern',
-            '.ytp-skip-ad-button',
-            '[class*="skip-button"]',
-            '.ytp-ad-skip-button-slot button',
-        ];
-        for (const sel of SKIP_SELECTORS) {
-            document.querySelectorAll(sel).forEach(btn => {
-                btn.click();
-            });
-        }
+        // Step 3: Schedule aggressive re-attempts every 50ms for 3 seconds
+        // to handle the window where the skip button appears after countdown
+        clearTimeout(window._aegisRetryTimer);
+        let retries = 0;
+        function retryKill() {
+            retries++;
+            if (retries > 60) return; // Stop after 3 seconds of retries
 
-        // ── d. If still showing after 300ms (non-skippable ad), reload ────
-        //      YouTube Premium simply doesn't show the ad at all; we simulate
-        //      this by re-seeking immediately on the next video.
-        clearTimeout(window._aegisForceKill);
-        window._aegisForceKill = setTimeout(() => {
             const stillAd = document.querySelector('.html5-video-player.ad-showing') ||
                             document.querySelector('.html5-video-player.ad-interrupting');
-            if (stillAd) {
-                const v = document.querySelector('video');
-                if (v && v.duration && isFinite(v.duration)) {
-                    v.currentTime = v.duration;
-                    v.playbackRate = 16.0;
-                }
-                // Click skip again
-                SKIP_SELECTORS.forEach(sel =>
-                    document.querySelectorAll(sel).forEach(b => b.click())
-                );
-            }
-        }, 300);
+            if (!stillAd) return; // Ad is gone, we're done
+
+            bypassSkipCountdown();
+            clickSkipButton();
+
+            window._aegisRetryTimer = setTimeout(retryKill, 50);
+        }
+        window._aegisRetryTimer = setTimeout(retryKill, 50);
     }
 
-    // ── 3. MUTATION OBSERVER — EVENT-DRIVEN, 0ms LATENCY ─────────────────────
-    // Watches the entire document for class changes on the player or child
-    // insertions (YouTube injects ad nodes dynamically).
-    function startObserver() {
-        const observer = new MutationObserver((mutations) => {
-            for (const m of mutations) {
-                // Class change on player (e.g., 'ad-showing' added)
-                if (m.type === 'attributes' && m.attributeName === 'class') {
-                    killAd();
-                    return;
+    // ─────────────────────────────────────────────────────────────────────────
+    // 6. DEDICATED SKIP BUTTON OBSERVER
+    //    Watches ONLY for skip button elements being added to the DOM.
+    //    This fires the instant YouTube injects the skip button node,
+    //    even mid-countdown. We click it immediately.
+    // ─────────────────────────────────────────────────────────────────────────
+    function startSkipButtonObserver() {
+        const skipObserver = new MutationObserver(() => {
+            // Check if any skip button is now in DOM
+            for (const sel of SKIP_SELECTORS) {
+                const btn = document.querySelector(sel);
+                if (btn) {
+                    btn.click();
+                    console.log('[Aegis v3] Skip button appeared & auto-clicked via observer.');
                 }
-                // New nodes inserted (ad overlay or skip button injected)
-                if (m.type === 'childList' && m.addedNodes.length > 0) {
+            }
+        });
+
+        skipObserver.observe(document.documentElement, {
+            subtree: true,
+            childList: true,
+        });
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // 7. MAIN PLAYER OBSERVER
+    //    Watches for 'ad-showing' class being added to the player element.
+    //    This is the primary trigger for killAd().
+    // ─────────────────────────────────────────────────────────────────────────
+    function startPlayerObserver() {
+        const playerObserver = new MutationObserver((mutations) => {
+            for (const m of mutations) {
+                if (m.type === 'attributes' && m.attributeName === 'class') {
+                    const target = m.target;
+                    if (
+                        target.classList.contains('ad-showing') ||
+                        target.classList.contains('ad-interrupting')
+                    ) {
+                        killAd();
+                        return;
+                    }
+                }
+                // Also watch for ad nodes being inserted
+                if (m.type === 'childList') {
                     for (const node of m.addedNodes) {
                         if (node.nodeType === 1) {
-                            const cls = node.className || '';
-                            if (
-                                typeof cls === 'string' &&
-                                (cls.includes('ad-') || cls.includes('ytp-ad'))
-                            ) {
+                            const cls = String(node.className || '');
+                            if (cls.includes('ytp-ad') || cls.includes('ad-showing')) {
                                 killAd();
                                 return;
                             }
@@ -156,45 +228,60 @@
             }
         });
 
-        observer.observe(document.documentElement, {
+        playerObserver.observe(document.documentElement, {
             subtree: true,
             childList: true,
             attributes: true,
             attributeFilter: ['class'],
         });
 
-        console.log('[Aegis AI Shield] MutationObserver active — Premium simulation ON.');
+        console.log('[Aegis AI Shield v3] Player observer active.');
     }
 
-    // ── 4. ALSO WATCH video timeupdate ───────────────────────────────────────
-    // Some non-skippable ads don't trigger class mutations.
-    // Listening to the video's timeupdate gives us a fast secondary trigger.
-    function attachVideoListener() {
+    // ─────────────────────────────────────────────────────────────────────────
+    // 8. VIDEO EVENT LISTENER
+    //    Secondary trigger via video element events.
+    // ─────────────────────────────────────────────────────────────────────────
+    function attachVideoListeners() {
         const video = document.querySelector('video');
-        if (!video || video._aegisAttached) return;
-        video._aegisAttached = true;
+        if (!video || video._aegisV3Attached) return;
+        video._aegisV3Attached = true;
+        video.addEventListener('play',       killAd, { passive: true });
         video.addEventListener('timeupdate', killAd, { passive: true });
-        video.addEventListener('play', killAd, { passive: true });
+        video.addEventListener('loadedmetadata', () => {
+            // When ad metadata loads, we know the duration — seek to end
+            const player = document.querySelector('.html5-video-player');
+            if (player && (
+                player.classList.contains('ad-showing') ||
+                player.classList.contains('ad-interrupting')
+            )) {
+                bypassSkipCountdown();
+                clickSkipButton();
+            }
+        }, { passive: true });
     }
 
-    // ── 5. BOOT ───────────────────────────────────────────────────────────────
-    // Start the observer as soon as any DOM is available.
+    // ─────────────────────────────────────────────────────────────────────────
+    // 9. BOOT
+    // ─────────────────────────────────────────────────────────────────────────
     function boot() {
-        startObserver();
-        attachVideoListener();
+        startPlayerObserver();
+        startSkipButtonObserver();
+        attachVideoListeners();
 
-        // Re-attach listener when YouTube navigates (SPA navigation)
+        // Re-attach on YouTube SPA navigation (clicking a new video)
         document.addEventListener('yt-navigate-finish', () => {
-            attachVideoListener();
+            attachVideoListeners();
             killAd();
         });
 
-        // Fallback safety net: run killAd every 500ms for edge cases
-        // (much less frequent than before, just a safety net)
+        // Safety net fallback — runs every 500ms (slower = less CPU waste)
         setInterval(() => {
-            attachVideoListener();
+            attachVideoListeners();
             killAd();
         }, 500);
+
+        console.log('[Aegis AI Shield v3] Booted — Zero-touch Premium simulation active.');
     }
 
     if (document.readyState === 'loading') {
